@@ -22,7 +22,6 @@ const ChatBox = () => {
 
   const [ prompt, setPrompt ] = useState("");
   const [ mode, setMode ] = useState("text");
-  const [ isPublished, setIsPublished ] = useState(false);
   const [ greetingMessage, setGreetingMessage ] = useState("");
 
   const greetingMessages = [
@@ -49,21 +48,58 @@ const ChatBox = () => {
   }, []);
 
   const onSubmit = async (e) => {
+    e.preventDefault();
+    if(!user) return toast.error("Login to send message");
+    
+    // Trim and check if empty
+    if(!prompt.trim()) {
+      return toast.error("Message cannot be empty");
+    }
+    
+    // Save prompt before any operations that could fail
+    const promptCopy = prompt;
+    
     try {
-      e.preventDefault();
-      if(!user) return toast("Login to send message");
-      if(!selectedChat) return toast("No chat selected. Creating a new chat...");
+      let chatToUse = selectedChat;
+      
+      // If no chat is selected, create a new one silently
+      if(!chatToUse) {
+        try {
+          // Create new chat
+          const createRes = await axios.get("/api/chat/create", { headers: { Authorization: token } });
+          if(createRes.data.success) {
+            // Fetch all chats to get the newly created one
+            const chatsRes = await axios.get("/api/chat/get", { headers: { Authorization: token } });
+            if(chatsRes.data.success && chatsRes.data.chats.length > 0) {
+              // Use the first (most recent) chat
+              chatToUse = chatsRes.data.chats[0];
+              setSelectedChat(chatToUse);
+              loadedChatId.current = chatToUse._id;
+            }
+          }
+        } catch (chatError) {
+          console.error("Chat creation error:", chatError);
+          toast.error("Failed to create chat");
+          return;
+        }
+      }
+      
+      if(!chatToUse) {
+        toast.error("Unable to create chat");
+        return;
+      }
+      
       setLoading(true);
-
-      const promptCopy = prompt
       setPrompt('');
-      setMessages(prev => [...prev, {role: "user", content: prompt, timestamp: Date.now(), isImage: false }]);
+      setMessages(prev => [...prev, {role: "user", content: promptCopy, timestamp: Date.now(), isImage: false }]);
 
-      const { data } = await axios.post(`/api/message/${mode}`, {chatId: selectedChat._id, prompt, isPublished}, {headers: { Authorization: token }});
+      const { data } = await axios.post(`/api/message/${mode}`, {chatId: chatToUse._id, prompt: promptCopy}, {headers: { Authorization: token }});
+      console.log("Response from server:", data);
+      console.log("Reply object:", data.reply);
       if(data.success) {
         setMessages(prev => [...prev, data.reply]);
         // Update selectedChat with new messages to keep sidebar in sync
-        setSelectedChat(prev => prev ? {...prev, messages: [...(prev.messages || []), {role: "user", content: prompt, timestamp: Date.now(), isImage: false }, data.reply]} : prev);
+        setSelectedChat(prev => prev ? {...prev, messages: [...(prev.messages || []), {role: "user", content: promptCopy, timestamp: Date.now(), isImage: false }, data.reply]} : prev);
         // decrease credits
         if(mode === "image") {
           setUser(prev => ({...prev, credits: prev.credits -2}));
@@ -76,9 +112,19 @@ const ChatBox = () => {
       }
 
     } catch (error) {
-      toast.error(error.message);
+      // Better error handling for specific status codes
+      if(error.response?.status === 503) {
+        toast.error("Service unavailable. Please check your API quotas (Gemini, ImageKit).");
+      } else if(error.response?.status === 429) {
+        toast.error("Rate limited. Please try again in a few minutes.");
+      } else if(error.response?.status === 408) {
+        toast.error("Request timed out. The service may be experiencing issues.");
+      } else {
+        toast.error(error.response?.data?.message || error.message || "An error occurred");
+      }
+      // Restore the prompt so user doesn't lose their input
+      setPrompt(promptCopy);
     } finally {
-      setPrompt('');
       setLoading(false);
     }
   };
@@ -178,13 +224,23 @@ const ChatBox = () => {
       <div ref={containerRef} className="flex-1 overflow-y-auto overflow-x-hidden" onScroll={handleScroll}>
         {messages.length === 0 && !loading && (
           <div className="h-full flex flex-col items-center justify-center gap-4 text-center px-2">
-            <p className="text-lg sm:text-2xl md:text-4xl text-gray-500 dark:text-gray-400 font-light px-2">{greetingMessage}</p>
+            <p className="text-lg sm:text-2xl md:text-4xl text-gray-600 dark:text-gray-400 font-light px-2">{greetingMessage}</p>
           </div>
         )} 
 
         {messages.length > 0 && <SessionDivider timestamp={messages[0]?.timestamp} />}
 
-        {messages.map((message, index) => <Message key={index} message={message} />)}
+        {messages.map((message, index) => (
+          <Message 
+            key={index} 
+            message={message} 
+            chatId={selectedChat?._id}
+            onImageDeleted={() => {
+              // Remove the deleted image from messages
+              setMessages(prev => prev.filter((msg, i) => i !== index));
+            }}
+          />
+        ))}
 
         {/* Typing indicator */}
         {loading && (
@@ -199,56 +255,62 @@ const ChatBox = () => {
 
       </div>
 
-      {mode === "image" && (
-        <label className="inline-flex items-center gap-2 text-xs sm:text-sm mx-auto">
-          <p className="text-xs">Publish Generated Image to Community</p>
-          <input type="checkbox" className="cursor-pointer" checked={isPublished} onChange={(e) => setIsPublished(e.target.checked)} />
-        </label>
-      )}
-
       {/* Prompt Input Box */}
-      <form onSubmit={onSubmit} className="bg-white dark:bg-[#1a1a1e] border border-gray-200 dark:border-gray-700 rounded-2xl w-full max-w-2xl sm:max-w-xl md:max-w-2xl p-2 sm:p-2.5 px-4 sm:px-5 mx-auto flex items-center gap-2 sm:gap-2.5 shadow-sm flex-shrink-0">
-        {/* Mode Toggle */}
-        <div className="flex bg-gray-100 dark:bg-[#242428] rounded-lg p-0.5">
-          <button
-            type="button"
-            onClick={() => {
-              if(containerRef.current) {
-                scrollPositionRef.current = containerRef.current.scrollTop;
-              }
-              setMode("text");
-            }}
-            className={`px-3 py-1 text-xs sm:text-sm rounded transition-all font-medium flex-shrink-0 ${
-              mode === "text"
-                ? "bg-white dark:bg-[#1a1a1e] text-gray-900 dark:text-white shadow-sm"
-                : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-300"
-            }`}
-          >
-            Text
+      <div className="w-full max-w-2xl sm:max-w-xl md:max-w-2xl mx-auto">
+        <form onSubmit={onSubmit} className="bg-white dark:bg-[#1a1a1e] border border-gray-200 dark:border-gray-700 rounded-2xl p-2 sm:p-2.5 px-4 sm:px-5 flex items-center gap-2 sm:gap-2.5 shadow-sm">
+          {/* Mode Toggle */}
+          <div className="flex bg-gray-100 dark:bg-[#2a2a32] rounded-lg p-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                if(containerRef.current) {
+                  scrollPositionRef.current = containerRef.current.scrollTop;
+                }
+                setMode("text");
+              }}
+              className={`px-3 py-1 text-xs sm:text-sm rounded transition-all font-medium flex-shrink-0 ${
+                mode === "text"
+                  ? "bg-white dark:bg-[#1a1a1e] text-gray-900 dark:text-white shadow-sm dark:shadow-[0_2px_8px_rgba(252,117,43,0.2)]"
+                  : "text-gray-600 dark:text-gray-500 bg-transparent hover:text-gray-900 dark:hover:text-gray-300"
+              }`}
+            >
+              Text
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if(containerRef.current) {
+                  scrollPositionRef.current = containerRef.current.scrollTop;
+                }
+                setMode("image");
+              }}
+              className={`px-3 py-1 text-xs sm:text-sm rounded transition-all font-medium flex-shrink-0 ${
+                mode === "image"
+                  ? "bg-white dark:bg-[#1a1a1e] text-gray-900 dark:text-white shadow-sm dark:shadow-[0_2px_8px_rgba(252,117,43,0.2)]"
+                  : "text-gray-600 dark:text-gray-500 bg-transparent hover:text-gray-900 dark:hover:text-gray-300"
+              }`}
+            >
+              Image
+            </button>
+          </div>
+          <div className="w-px h-6 bg-gray-200 dark:bg-gray-700"></div>
+          <input onChange={(e) => setPrompt(e.target.value)} value={prompt} type="text" placeholder="Type message..." className="flex-1 min-w-0 text-xs sm:text-sm outline-none bg-transparent text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400" required maxLength={5000} />
+          <button type="submit" disabled={loading} className="p-2 hover:bg-gray-100 dark:hover:bg-[#242428] rounded-lg transition-colors flex-shrink-0">
+            <img src={loading ? assets.stop_icon : assets.send_icon} className="w-7 h-7 sm:w-8 sm:h-8 cursor-pointer" alt="send/stop" />
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              if(containerRef.current) {
-                scrollPositionRef.current = containerRef.current.scrollTop;
-              }
-              setMode("image");
-            }}
-            className={`px-3 py-1 text-xs sm:text-sm rounded transition-all font-medium flex-shrink-0 ${
-              mode === "image"
-                ? "bg-white dark:bg-[#1a1a1e] text-gray-900 dark:text-white shadow-sm"
-                : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-300"
-            }`}
-          >
-            Image
-          </button>
-        </div>
-        <div className="w-px h-6 bg-gray-200 dark:bg-gray-700"></div>
-        <input onChange={(e) => setPrompt(e.target.value)} value={prompt} type="text" placeholder="Type message..." className="flex-1 min-w-0 text-xs sm:text-sm outline-none bg-transparent text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400" required />
-        <button disabled={loading} className="p-2 hover:bg-gray-100 dark:hover:bg-[#242428] rounded-lg transition-colors flex-shrink-0">
-          <img src={loading ? assets.stop_icon : assets.send_icon} className="w-6 h-6 sm:w-7 sm:h-7 cursor-pointer" alt="send/stop" />
-        </button>
-      </form>
+        </form>
+        {/* Character Warning */}
+        {prompt.length > 4500 && (
+          <div className="flex justify-between items-center px-4 sm:px-5 pt-2">
+            <span className="text-xs sm:text-sm font-medium text-red-500 dark:text-red-400">
+              ⚠️ Approaching limit
+            </span>
+            <span className="text-xs font-medium text-red-500 dark:text-red-400">
+              {prompt.length} / 5000
+            </span>
+          </div>
+        )}
+      </div>
 
     </div>
   );
