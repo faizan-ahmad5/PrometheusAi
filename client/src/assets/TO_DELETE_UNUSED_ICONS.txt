@@ -1,0 +1,1 @@
+diamond_icon.svg, gallery_icon.svg, and logout_icon.svg are unused and can be deleted.

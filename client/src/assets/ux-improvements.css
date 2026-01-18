@@ -1,0 +1,14 @@
+/*
+  Global UX improvement: Make all <button> and <a> elements show a pointer cursor on hover for a professional, interactive feel.
+*/
+
+button,
+a {
+  cursor: pointer;
+}
+
+/* Optionally, you can add a transition for smoother hover effects */
+button,
+a {
+  transition: box-shadow 0.2s, background 0.2s, color 0.2s;
+}
