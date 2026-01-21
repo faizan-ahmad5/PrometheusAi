@@ -27,7 +27,7 @@ The system focuses on security, scalability, and real-world integrations, making
 - bcrypt – Password hashing
 - crypto – Secure token generation and hashing
 - Nodemailer – Email verification and notifications
-- OpenAI / Gemini APIs – AI prompt processing
+- Gemini APIs – AI prompt processing
 - ImageKit – Image upload and CDN delivery
 - Stripe SDK – Payments and webhook handling
 - dotenv, cors, rate-limiting – Security and configuration
@@ -47,7 +47,7 @@ The system focuses on security, scalability, and real-world integrations, making
 
 - Authenticated users can send prompts to the AI
 - Backend checks available credits and rate limits
-- Prompts are sent to OpenAI or Gemini
+- Prompts are sent to Gemini
 - AI responses are stored in the database
 - Credits are deducted per request to prevent abuse
 
